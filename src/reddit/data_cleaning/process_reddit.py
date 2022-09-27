@@ -14,7 +14,7 @@ import random
 import tensorflow as tf
 import numpy as np
 import bert.tokenization as tokenization
-from reddit import data_cleaning as rp
+import reddit.data_cleaning.reddit_posts as rp
 
 rng = random.Random(0)
 
@@ -34,6 +34,13 @@ def process_without_response_task(row_dict, tokenizer):
 def process_row_record(row_dict, tokenizer, random_response=None, use_response_task=True):
     if not use_response_task:
         return process_without_response_task(row_dict, tokenizer)
+
+    # Fixes https://github.com/google-research/bert/issues/1133
+    import sys
+    import absl.flags
+    sys.argv = ["preserve_unused_tokens=False"]
+    absl.flags.FLAGS(sys.argv)
+    absl.flags.FLAGS(["preserve_unused_tokens=False"])
 
     context_features = {}
     op_tokens = tokenizer.tokenize(row_dict['post_text'])
@@ -243,7 +250,7 @@ def process_reddit_dataset(data_dir, out_dir, out_file, max_abs_len, tokenizer, 
     np.random.shuffle(random_example_indices)
     random_response_mask = np.random.randint(0, 2, len(reddit_records))
 
-    with tf.python_io.TFRecordWriter(out_dir + "/" + out_file) as writer:
+    with tf.io.TFRecordWriter(out_dir + "/" + out_file) as writer:
         for idx, row_dict in enumerate(reddit_records):
 
             if subsample and idx >= subsample:
@@ -281,7 +288,7 @@ def main():
     parser.add_argument('--data-dir', type=str, default=None)
     parser.add_argument('--out-dir', type=str, default='../tmp')
     parser.add_argument('--out-file', type=str, default='proc.tf_record')
-    parser.add_argument('--vocab-file', type=str, default='../../bert/pre-trained/uncased_L-12_H-768_A-12/vocab.txt')
+    parser.add_argument('--vocab-file', type=str, default='../pre-trained/uncased_L-12_H-768_A-12/vocab.txt')
     parser.add_argument('--max-abs-len', type=int, default=128)
     parser.add_argument('--subsample', type=int, default=0)
     parser.add_argument('--use-latest-reddit', type=bool, default=True)

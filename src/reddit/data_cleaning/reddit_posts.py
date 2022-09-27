@@ -3,8 +3,24 @@ import pandas as pd
 import os
 import json
 from scipy import sparse
-from result_processing.helpers import tokenize_documents
 # from plotnine import *
+
+from sklearn.feature_extraction.text import CountVectorizer
+np.random.seed(0)
+def tokenize_documents(documents,max_df0=0.8, min_df0=0.01,print_vocabulary=False,outfolder=None,output_vocabulary_fname='vocabulary.dat'):
+        from nltk.corpus import stopwords
+        '''
+        From a list of documents raw text build a matrix DxV
+        D: number of docs
+        V: size of the vocabulary, i.e. number of unique terms found in the whole set of docs
+        '''
+        stop = stopwords.words('english')
+        count_vect = CountVectorizer(stop_words=stop,max_df=max_df0, min_df=min_df0)
+        corpus = count_vect.fit_transform(documents)
+        vocabulary = count_vect.get_feature_names()
+
+        return corpus,vocabulary,count_vect
+
 
 def load_term_counts(path='../dat/', force_redo=False):
     count_filename = path  + 'reddit_term_counts'
@@ -159,9 +175,8 @@ def load_reddit_processed(path='../dat/reddit/'):
     reddit['orig_index'] = reddit.index
     return reddit
 
-def load_reddit_latest(path='../dat/', convert_columns=False):
-
-    with open(os.path.join(path, '2018'), 'r') as f:
+def load_reddit_latest(path='../dat/reddit/', convert_columns=False):
+    with open(os.path.join(path, '2018.json'), 'r') as f:
         record_dicts = []
         for line in f.readlines():
             record = json.loads(line)
