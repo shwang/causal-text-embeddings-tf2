@@ -138,4 +138,7 @@ def real():
 if __name__ == '__main__':
     # estimates = confounding_level()
     # estimates = real()
-    estimates = buzzy_baselines()
+    # estimates = buzzy_baselines()
+    estimates = att_from_bert_tsv("../output/peerread_att/predictions.tsv")
+    # ===> "Warning: no updated occurred, is deps too big?"
+    print(estimates)

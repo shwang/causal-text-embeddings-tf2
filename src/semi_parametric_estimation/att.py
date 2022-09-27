@@ -177,6 +177,7 @@ def one_step_tmle(q_t0, q_t1, g, t, y, cross_ent_outcome=False, deps=0.001, max_
         if new_loss > old_loss:
             if eps == 0.:
                 print("Warning: no update occurred (is deps too big?)")
+                print(i)
             q_old = (1 - t) * q0_old + t * q1_old
             ic = ((t - (1 - t) * g_old / (1 - g_old)) * (y - q_old)
                   + t * (q1_old - q0_old - _psi(q0_old, q1_old, g_old))) / prob_t
@@ -189,6 +190,8 @@ def one_step_tmle(q_t0, q_t1, g, t, y, cross_ent_outcome=False, deps=0.001, max_
             g_old = perturbed_g
 
             old_loss = new_loss
+
+    print(f"total iters {}".format(i))
 
     print("Warning: max number of iterations reached")
     q_old = (1 - t) * q0_old + t * q1_old

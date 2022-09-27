@@ -120,6 +120,15 @@ flags.DEFINE_string("prediction_file", "../output/predictions.tsv", "path where 
 FLAGS = flags.FLAGS
 
 
+# def make_unique_filename():
+#     import datetime
+#     import randomname
+#     ISO_TIMESTAMP = "%Y%m%d_%H%M%S"
+#     timestamp = datetime.datetime.now().strftime(ISO_TIMESTAMP)
+#     rand_name = randomname.get_name()
+#     return f"{timestamp}_{rand_name}"  # To .format() notation for containers
+
+
 def _keras_format(features, labels):
     # features, labels = sample
     y = labels['outcome']
@@ -152,7 +161,7 @@ def make_dataset(is_training: bool, do_masking=False):
                                                           seed=0)
 
     else:
-        Exception("simulated flag not recognized")
+        raise Exception("simulated flag not recognized")
 
     tokenizer = tokenization.FullTokenizer(
         vocab_file=FLAGS.vocab_file, do_lower_case=FLAGS.do_lower_case)

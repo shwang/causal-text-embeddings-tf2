@@ -251,6 +251,8 @@ def make_buzzy_based_simulated_labeler(treat_strength, con_strength, noise_level
         threshold = tf.gather(all_threshholds, index)
         simulated_outcome = tf.cast(tf.greater(simulated_prob, threshold), tf.int32)
 
+        # TODO(shwang):
+        # Interestingly, treatment is left unchanged. We truly are only changing the (simulated) outcome?
         return {**data, 'outcome': simulated_outcome, 'y0': y0, 'y1': y1, 'treatment': treatment}
 
     return labeler
