@@ -21,7 +21,7 @@ def att_from_bert_tsv(tsv_path, test_split=True, trim=0.0):
         reduced_df = predictions[predictions.in_train == 1]
 
     gt = reduced_df[reduced_df.treatment == 1].y1.mean() - reduced_df[reduced_df.treatment == 1].y0.mean()
-    # print(f"Ground truth: {gt}")
+    print(f"Ground truth: {gt}")
 
     naive = reduced_df[reduced_df.treatment == 1].outcome.mean() - reduced_df[reduced_df.treatment == 0].outcome.mean()
     # print(f"Naive: {naive}")
@@ -64,6 +64,8 @@ def dragon_att(output_dir, test_split=True, trim=0.03, trim_test=False):
     """
 
     data_files = sorted(glob.glob(f'{output_dir}/*/*.tsv', recursive=True))
+    if len(data_files) == 0:
+        raise ValueError(output_dir)
     estimates = []
     for data_file in data_files:
         try:

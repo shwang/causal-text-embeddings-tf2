@@ -15,13 +15,20 @@ There is also a [reference implementation in pytorch.](https://github.com/rpryza
 All code in tf_official is taken from https://github.com/tensorflow/models/tree/master/official 
 (and subject to their liscensing requirements)
 
+# Setup
+1. Use a virtual environment with Python 3.7 (other versions of Python are not supported).
+2. Run `pip install -r tensorflow~=2.1.0 scipy pandas tensorflow_hub nltk`.
+   Note that some newer Nvidia GPUs are not compatible with this version of Tensorflow, regardless of CUDA driver
+   installation.
+3. You may need to upgrade protobuf with `pip install protobuf==3.20.0`.
+
 # Instructions
 1. Download BERT-Base, Uncased pre-trained model following instructions at https://github.com/tensorflow/models/tree/master/official/nlp/bert
 Extract to ../pre-trained/uncased_L-12_H-768_A-12
 
 2. in src/  
 ```
-    run python -m PeerRead.model.run_causal_bert \
+    python -m PeerRead.model.run_causal_bert \
         --input_files=../dat/PeerRead/proc/arxiv-all.tf_record \ 
         --bert_config_file=../pre-trained/uncased_L-12_H-768_A-12/bert_config.json \ 
         --init_checkpoint=../pre-trained/uncased_L-12_H-768_A-12/bert_model.ckpt \ 
