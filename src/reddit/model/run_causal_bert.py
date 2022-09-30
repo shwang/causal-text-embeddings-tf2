@@ -23,6 +23,7 @@ import time
 
 import numpy as np
 import pandas as pd
+import pathlib
 
 from absl import app
 from absl import flags
@@ -99,7 +100,7 @@ flags.DEFINE_string("test_splits", '9', "indices of test splits")
 # Flags specifically related to PeerRead experiment
 
 flags.DEFINE_string(
-    "treatment", "gender",
+    "treatment", "male_ratio",
     "Covariate used as treatment."
 )
 flags.DEFINE_string("subreddits", '13,6,8', "the list of subreddits to train on")
@@ -131,13 +132,15 @@ def _keras_format(features, labels):
 
 def make_dataset(is_training: bool, do_masking=False, force_keras_format=False):
     if FLAGS.simulated == 'real':
-        labeler = make_real_labeler(FLAGS.treatment, 'log_score')
-
-    elif FLAGS.simulated == 'attribute':
-        labeler = make_subreddit_based_simulated_labeler(FLAGS.beta0, FLAGS.beta1, FLAGS.gamma, FLAGS.simulation_mode,
-                                                         seed=0)
+        # labeler = make_real_labeler(FLAGS.treatment, 'log_score')
+        labeler = make_real_labeler(FLAGS.treatment, 'uncertainty_output')
     else:
-        raise Exception("simulated flag not recognized")
+        raise ValueError(FLAGS.simulated)
+    # elif FLAGS.simulated == 'attribute':
+    #     labeler = make_subreddit_based_simulated_labeler(FLAGS.beta0, FLAGS.beta1, FLAGS.gamma, FLAGS.simulation_mode,
+    #                                                      seed=0)
+    # else:
+    #     raise Exception("simulated flag not recognized")
 
     tokenizer = tokenization.FullTokenizer(
         vocab_file=FLAGS.vocab_file, do_lower_case=FLAGS.do_lower_case)
@@ -208,9 +211,6 @@ def main(_):
     assert tf.version.VERSION.startswith('2.')
     tf.random.set_seed(FLAGS.seed)
 
-    # with tf.io.gfile.GFile(FLAGS.input_meta_data_path, 'rb') as reader:
-    #     input_meta_data = json.loads(reader.read().decode('utf-8'))
-
     if not FLAGS.model_dir:
         FLAGS.model_dir = '/tmp/bert20/'
     #
@@ -218,12 +218,16 @@ def main(_):
     #
     bert_config = modeling.BertConfig.from_json_file(FLAGS.bert_config_file)
     epochs = FLAGS.num_train_epochs
-    # train_data_size = 11778
-    train_data_size = 90000
-    # LMAO WHAT?
     # This is hard-coded here because TFRecordDataset does not store the length. =(
     # But anyways, the actual data length is 417,895. Maybe there is a discrepancy because they dropped
     # data with extremal values (vaguely remember something like this from the paper).
+    # train_data_size = 11778
+    # train_data_size = 90000
+
+    train_data_size = get_tf_ds_len(FLAGS.input_files)
+    # Aww I'm so clever =) 💆
+    train_data_size = 50
+
     steps_per_epoch = int(train_data_size / FLAGS.train_batch_size)  # not "368", but 5625
     warmup_steps = int(epochs * train_data_size * 0.1 / FLAGS.train_batch_size)
     initial_lr = FLAGS.learning_rate
@@ -295,6 +299,8 @@ def main(_):
 
             callbacks = [summary_callback, checkpoint_callback]
 
+            # Oof, does this even make sense with the do_masking..? Maybe.
+            #  Yet another uncertainty.
             val_data = make_dataset(is_training=False, do_masking=True, force_keras_format=True)
             dragon_model.fit(
                 x=keras_train_data,
@@ -346,20 +352,36 @@ def main(_):
         print("Wrote predictions to {}".format(FLAGS.prediction_file))
         
         
-def silly_main():
-    def get_len(ds) -> int:
+def silly_main(path):
+    def get_ds_len(ds) -> int:
         i = 0
         for _ in ds:
             i += 1
         return i
-    raw_ds = tf.data.TFRecordDataset(["../dat/reddit/proc.tf_record"])
-    print(raw_ds)
-    x = get_len(raw_ds)
+    raw_ds = tf.data.TFRecordDataset([path])
+    x = get_ds_len(raw_ds)
     print(x)
+    return x
+
+
+def get_tf_ds_len(path) -> int:
+    def get_ds_len(ds) -> int:
+        i = 0
+        for _ in ds:
+            i += 1
+        return i
+    raw_ds = tf.data.TFRecordDataset([path])
+    x = get_ds_len(raw_ds)
+    return x
+
+
+SMALL_DS_PATH = pathlib.Path("../dat/shwang_small/proc.tf_record")
+FULL_DS_PATH = pathlib.Path("../dat/shwang_full/proc.tf_record")
 
 
 if __name__ == '__main__':
-    # silly_main()
+    # tf.data.experimental.enable_debug_mode()
+    # silly_main(SMALL_DS_PATH)
     flags.mark_flag_as_required('bert_config_file')
     # flags.mark_flag_as_required('input_meta_data_path')
     # flags.mark_flag_as_required('model_dir')

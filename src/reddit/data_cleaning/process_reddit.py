@@ -9,9 +9,12 @@ https://github.com/tensorlayer/tensorlayer/blob/9528da50dfcaf9f0f81fba9453e488a1
 
 import argparse
 import os
+import pathlib
+import pandas as pd
 import random
 
 import tensorflow as tf
+import tqdm
 import numpy as np
 import bert.tokenization as tokenization
 import reddit.data_cleaning.reddit_posts as rp
@@ -19,22 +22,7 @@ import reddit.data_cleaning.reddit_posts as rp
 rng = random.Random(0)
 
 
-def process_without_response_task(row_dict, tokenizer):
-    context_features = {}
-    op_tokens = tokenizer.tokenize(row_dict['post_text'])
-
-    text_features = {'op_text': op_tokens}
-    for key in row_dict:
-        if key not in {'post_text', 'response_text'}:
-            context_features[key] = row_dict[key]
-
-    return text_features, context_features
-
-
-def process_row_record(row_dict, tokenizer, random_response=None, use_response_task=True):
-    if not use_response_task:
-        return process_without_response_task(row_dict, tokenizer)
-
+def process_row_record(row_dict: dict, tokenizer):
     # Fixes https://github.com/google-research/bert/issues/1133
     import sys
     import absl.flags
@@ -42,53 +30,42 @@ def process_row_record(row_dict, tokenizer, random_response=None, use_response_t
     absl.flags.FLAGS(sys.argv)
     absl.flags.FLAGS(["preserve_unused_tokens=False"])
 
-    context_features = {}
-    op_tokens = tokenizer.tokenize(row_dict['post_text'])
+    # IDEA: Save with text (len < 1) and (len < 10) and (len < 20)
 
-    if random_response:
-        response_tokens = tokenizer.tokenize(random_response)
-        context_features['has_random_resp'] = 1
-    else:
-        response_tokens = tokenizer.tokenize(row_dict['response_text'])
-        context_features['has_random_resp'] = 0
-
-    if len(op_tokens) < 2 or len(response_tokens) < 2:
+    text = row_dict['sentence_deleted_hedge']
+    if len(text) < 1:  # TODO(shwang): Skip <10 in the future
+        """ e.g. len(text) < 10
+        Warning: Skipping text=178-80). due to short length.
+        Warning: Skipping text=. due to short length.
+        Warning: Skipping text=B. due to short length.
+        Warning: Skipping text=2003). due to short length.
+        Warning: Skipping text=. due to short length.
+        Warning: Skipping text=12, pp. due to short length.
+        Warning: Skipping text=. due to short length.
+        Warning: Skipping text=63, no. due to short length.
+        Warning: Exceeded maximum sequence length. Truncating from 288 to 256 tokens.
+        Warning: Skipping text=(2002). due to short length.
+        Warning: Skipping text=Proof. due to short length.
+        Warning: Skipping text=7. due to short length.
+        """
+        # print("Warning: Skipping text={} due to short length.".format(text))
         return None, None
+    tokens = tokenizer.tokenize(text)
 
-    text_features = {'op_text': op_tokens,
-                     'resp_text': response_tokens}
-
-    for key in row_dict:
-        if key not in {'post_text', 'response_text'}:
-            context_features[key] = row_dict[key]
-
-    # add hand crafted features from PeerRead
-
+    text_features = {'sentence_deleted_hedge_tokens': tokens}
+    context_features = row_dict
     return text_features, context_features
 
 
 def bert_process_sentence(example_tokens, max_seq_length, tokenizer, segment=1):
-    """
-    Tokenization and pre-processing of text as expected by Bert
-
-    Parameters
-    ----------
-    example_tokens
-    max_seq_length
-    tokenizer
-
-    Returns
-    -------
-
-
-
-    """
+    """Tokenization and pre-processing of text as expected by Bert"""
     # Account for [CLS] and [SEP] with "- 2"
     if len(example_tokens) > max_seq_length - 2:
         print("Warning: Exceeded maximum sequence length. Truncating from {} to {} tokens.".format(
             len(example_tokens) + 2,
             max_seq_length,
         ))
+        print("Original tokens: {}".format(" ".join(example_tokens)))
         example_tokens = example_tokens[0:(max_seq_length - 2)]
 
     # The convention in BERT for single sequences is:
@@ -101,19 +78,6 @@ def bert_process_sentence(example_tokens, max_seq_length, tokenizer, segment=1):
     # For classification tasks, the first vector (corresponding to [CLS]) is
     # used as as the "sentence vector". Note that this only makes sense because
     # the entire model is fine-tuned.
-
-    '''
-    If we need sentence detection logic:
-
-    if token in string.punctuation:
-        #     if (tidx < len(example_tokens) - 1) and (example_tokens[tidx + 1] in string.punctuation):
-        #         tokens.append(token)
-        #     else:
-        #         tokens.append("[SEP]")
-        # else:
-
-    '''
-
     tokens = []
     segment_ids = []
     tokens.append("[CLS]")
@@ -144,38 +108,25 @@ def bert_process_sentence(example_tokens, max_seq_length, tokenizer, segment=1):
     return input_ids, input_mask, segment_ids
 
 
-def reddit_to_bert_Example(text_features, context_features, max_seq_length, tokenizer, use_response_task=True):
+def reddit_to_bert_Example(text_features, context_features, max_seq_length, tokenizer):
     """
     Parses the input paper into a tf.Example as expected by Bert
     Note: the docs for tensorflow Example are awful ¯\_(ツ)_/¯
     """
     features = {}
 
-    op_tokens, op_padding_mask, op_segments = \
-        bert_process_sentence(text_features['op_text'], max_seq_length, tokenizer)
+    tokens, padding_mask, segments = \
+        bert_process_sentence(text_features['sentence_deleted_hedge_tokens'], max_seq_length, tokenizer)
 
-    features["op_token_ids"] = _int64_feature(op_tokens)
-    features["op_token_mask"] = _int64_feature(op_padding_mask)
-    features["op_segment_ids"] = _int64_feature(op_segments)
+    features["token_ids"] = _int64_feature(tokens)
+    features["token_mask"] = _int64_feature(padding_mask)
+    features["segment_ids"] = _int64_feature(segments)
 
-    if use_response_task:
-        resp_tokens, resp_padding_mask, resp_segments = \
-            bert_process_sentence(text_features['resp_text'], max_seq_length, tokenizer, segment=0)
-
-        features["resp_token_ids"] = _int64_feature(resp_tokens)
-        features["resp_token_mask"] = _int64_feature(resp_padding_mask)
-        features["resp_segment_ids"] = _int64_feature(resp_segments)
-
-    # abstract_features["segment_ids"] = create_int_feature(feature.segment_ids)  TODO: ommission may cause bugs
-    # abstract_features["label_ids"] = _int64_feature([feature.label_id])
-
-    # non-sequential features
+    # non-sequential features from context_dict.
+    # Note that we drop all string features (keep only int or float).
     tf_context_features, tf_context_features_types = _dict_of_nonlist_numerical_to_tf_features(context_features)
-
     features = {**tf_context_features, **features}
-
     tf_example = tf.train.Example(features=tf.train.Features(feature=features))
-
     return tf_example
 
 
@@ -234,66 +185,58 @@ def process_reddit_dataset(data_dir, out_dir, out_file, max_abs_len, tokenizer, 
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
 
-    if use_latest_reddit:
-        if data_dir:
-            reddit_df = rp.load_reddit(path=data_dir, use_latest=use_latest_reddit, convert_columns=True)
-        else:
-            reddit_df = rp.load_reddit(use_latest=use_latest_reddit, convert_columns=True)
-
-    else:
-        if data_dir:
-            reddit_df = rp.load_reddit(path=data_dir, convert_columns=True)
-        else:
-            reddit_df = rp.load_reddit(convert_columns=True)
+    # TODO(shwang): Replace with df.read_csv I think.
+    df = pd.read_csv("../our_data/sentences_shwang_all.csv")
+    #     if data_dir:
+    #         reddit_df = rp.load_reddit(path=data_dir, use_latest=use_latest_reddit, convert_columns=True)
+    #     else:
+    #         reddit_df = rp.load_reddit(use_latest=use_latest_reddit, convert_columns=True)
 
     # add persistent record of the index of the data examples
-    reddit_df['index'] = reddit_df.index
+    df['index'] = df.index
+    records = df.to_dict('records')
+    FAST = True
+    if FAST:
+        records = records[::1000]
+    n_records = len(records)
+    print("Hello, I prioritize my scalp, and I loaded n={} records.".format(n_records))
+    print("The columns that I loaded are: {}".format(df.columns))
 
-    reddit_records = reddit_df.to_dict('records')
-    random_example_indices = np.arange(len(reddit_records))
-    np.random.shuffle(random_example_indices)
-    random_response_mask = np.random.randint(0, 2, len(reddit_records))
+    # random_example_indices = np.arange(len(records))
+    # np.random.shuffle(random_example_indices)
+    # random_response_mask = np.random.randint(0, 2, len(records))
+
+    out_path = pathlib.Path(out_dir, out_file)
+    print("Writing to {}".format(out_path))
 
     with tf.io.TFRecordWriter(out_dir + "/" + out_file) as writer:
-        for idx, row_dict in enumerate(reddit_records):
-
+        for idx, row_dict in enumerate(tqdm.tqdm(records, desc="Records")):
             if subsample and idx >= subsample:
                 break
 
-            if (random_response_mask[idx]) and (random_example_indices[idx] != idx):
-                random_response = reddit_records[random_example_indices[idx]]['response_text']
-                text_features, context_features = process_row_record(row_dict, tokenizer,
-                                                                     random_response=random_response)
-            else:
-                text_features, context_features = process_row_record(row_dict, tokenizer)
-            '''
-            TODO: is this needed?
-
-            many_split = rng.randint(0, 100)  # useful for easy data splitting later
-            extra_context = {'id': idx, 'many_split': many_split}
-            context_features.update(extra_context)
-            '''
-
+            text_features, context_features = process_row_record(row_dict, tokenizer)
             # turn it into a tf.data example
-
-            if text_features and context_features:
+            if text_features is not None:
                 many_split = rng.randint(0, 100)  # useful for easy data splitting later
                 extra_context = {'many_split': many_split}
                 context_features.update(extra_context)
-
                 row_ex = reddit_to_bert_Example(text_features, context_features,
                                                 max_seq_length=max_abs_len,
                                                 tokenizer=tokenizer)
+                feat_keys = row_ex.features.ListFields()[0][1].keys()
+                assert "male_ratio" in feat_keys
+                assert "token_ids" in feat_keys
                 writer.write(row_ex.SerializeToString())
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data-dir', type=str, default=None)
-    parser.add_argument('--out-dir', type=str, default='../tmp')
+    # parser.add_argument('--out-dir', type=str, default='../tmp/confidence')
+    parser.add_argument('--out-dir', type=str, default='../dat/shwang_tiny')
     parser.add_argument('--out-file', type=str, default='proc.tf_record')
     parser.add_argument('--vocab-file', type=str, default='../pre-trained/uncased_L-12_H-768_A-12/vocab.txt')
-    parser.add_argument('--max-abs-len', type=int, default=128)
+    parser.add_argument('--max-abs-len', type=int, default=512)
     parser.add_argument('--subsample', type=int, default=0)
     parser.add_argument('--use-latest-reddit', type=bool, default=True)
 

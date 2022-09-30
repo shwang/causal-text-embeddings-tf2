@@ -57,6 +57,30 @@ all_context_features = ['author',
                         'many_split',
                         'index']
 
+context_features_mapping = dict(
+    male_ratio=tf.float32,
+    uncertainty_output=tf.float32,
+    index=tf.int64,
+    many_split=tf.int64,
+)
+
+all_context_features = [
+    'uncertainty_output',
+    'male_ratio',
+    # 'word_number',
+    # 'sentence_placement',
+    # 'sentence_number',
+    # 'avg_sentence_length',
+    # 'averagecitations',
+    # 'numberauthors',
+    # 'yearPub',
+    # 'weighteda1hindex',
+    # 'weightedi10index',
+    'index',
+    'many_split',
+    # =)
+]
+
 
 def get_one_hot_encoding(subreddit_idx):
     return tf.one_hot(subreddit_idx, num_distinct_subreddits)
@@ -104,17 +128,33 @@ def make_null_labeler():
     return labeler
 
 
-def make_real_labeler(treatment_name, outcome_name):
+def OLD_make_real_labeler(treatment_name, outcome_name):
     def labeler(data):
-        if outcome_name=='log_score':
+        if outcome_name == 'log_score':
             outcome = tf.math.log(tf.nn.relu(tf.cast(data['score'], tf.float32)) + 1.)
         else:
             outcome = data[outcome_name]
 
         return {**data, 'outcome': outcome, 'treatment': data[treatment_name], 'y0': tf.zeros([1]),
                 'y1': tf.zeros([1])}
-
     return labeler
+
+
+def make_real_labeler(treatment_name, outcome_name):
+    def our_labeler(data):
+        assert treatment_name in {"male_ratio", "female_ratio"}
+        assert outcome_name in {"uncertainty_output"}
+        outcome = data[outcome_name]
+        treatment = data[treatment_name]
+        new_data = dict(
+            outcome=outcome,
+            treatment=treatment,
+            y0=tf.zeros([1]),
+            y1=tf.zeros([1]),
+        )
+        return {**data, **new_data}
+
+    return our_labeler
 
 
 def outcome_sim(beta0, beta1, gamma, treatment, confounding, noise, setting="simple"):
@@ -311,8 +351,8 @@ def _make_bert_compatifier(do_masking):
         if do_masking:
             x = {
                 'input_word_ids': data['maybe_masked_input_ids'],
-                'input_mask': data['op_token_mask'],
-                'input_type_ids': tf.zeros_like(data['op_token_mask']),  # segment ids
+                'input_mask': data['token_mask'],
+                'input_type_ids': tf.zeros_like(data['token_mask']),  # segment ids
                 'masked_lm_positions': data['masked_lm_positions'],
                 'masked_lm_ids': data['masked_lm_ids'],
                 'masked_lm_weights': data['masked_lm_weights'],
@@ -325,15 +365,13 @@ def _make_bert_compatifier(do_masking):
         else:
             x = {
                 'input_word_ids': data['maybe_masked_input_ids'],
-                'input_mask': data['op_token_mask'],
-                'input_type_ids': tf.zeros_like(data['op_token_mask']),  # segment ids
+                'input_mask': data['token_mask'],
+                'input_type_ids': tf.zeros_like(data['token_mask']),  # segment ids
             }
 
-        y = {'outcome': data['outcome'], 'treatment': data['treatment'],
-             'in_dev': data['in_dev'], 'in_test': data['in_test'], 'in_train': data['in_train'],
-             'y0': data['y0'], 'y1': data['y1'],
-             'index': data['index'], 'subreddit':data['subreddit']}
-
+        y_keys = ["outcome", "treatment", "in_dev", "in_test", "in_train",
+                  "y0", "y1", "index"]
+        y = {k: data[k] for k in y_keys}
         return x, y
 
     return bert_compatibility
@@ -377,14 +415,14 @@ def dataset_processing(dataset, parser, masker, labeler, do_masking, is_training
 
     dataset = dataset.map(data_processing, 4)
 
-    if subreddits is not None:
-        def filter_test_fn(features,label):
-            is_valid = False
-            for subreddit in subreddits:
-                is_valid = tf.logical_or(is_valid, tf.equal(label['subreddit'], subreddit))
-            return is_valid
+    # if subreddits is not None:
+    #     def filter_test_fn(features,label):
+    #         is_valid = False
+    #         for subreddit in subreddits:
+    #             is_valid = tf.logical_or(is_valid, tf.equal(label['subreddit'], subreddit))
+    #         return is_valid
 
-        dataset = dataset.filter(filter_test_fn)
+    #     dataset = dataset.filter(filter_test_fn)
 
     if filter_test:
         def filter_test_fn(features,label):
@@ -410,10 +448,10 @@ def dataset_processing(dataset, parser, masker, labeler, do_masking, is_training
 def null_masker(data):
     return {
         **data,
-        'maybe_masked_input_ids': data['op_token_ids'],
-        'masked_lm_positions': tf.zeros_like(data['op_token_ids']),
-        'masked_lm_ids': tf.zeros_like(data['op_token_ids']),
-        'masked_lm_weights': tf.zeros_like(data['op_token_ids'])
+        'maybe_masked_input_ids': data['token_ids'],
+        'masked_lm_positions': tf.zeros_like(data['token_ids']),
+        'masked_lm_ids': tf.zeros_like(data['token_ids']),
+        'masked_lm_weights': tf.zeros_like(data['token_ids'])
     }
 
 
@@ -428,6 +466,7 @@ def make_input_fn_from_file(input_files_or_glob, seq_length,
     input_files = []
     for input_pattern in input_files_or_glob.split(","):
         input_files.extend(tf.io.gfile.glob(input_pattern))
+    print("Reading from input_files={}".format(input_files))
 
     if labeler is None:
         labeler = make_null_labeler()
@@ -456,9 +495,10 @@ def make_input_fn_from_file(input_files_or_glob, seq_length,
         max_abstract_len = seq_length
 
         parser = make_parser(abs_seq_len=max_abstract_len)  # parse the tf_record
-        encoder = make_one_hot_encoder()
 
-        parser = compose(parser, encoder)
+        # TODO(shwang): Maybe use one_hot_encoder myself.
+        # encoder = make_one_hot_encoder()
+        # parser = compose(parser, encoder)
 
         dataset = dataset_processing(dataset,
                                      parser, masker, labeler,
@@ -480,7 +520,7 @@ def make_input_id_masker(tokenizer, seed):
     # (One of) Bert's unsupervised objectives is to mask some fraction of the input words and predict the masked words
 
     def masker(data):
-        token_ids = data['op_token_ids']
+        token_ids = data['token_ids']
         maybe_masked_input_ids, masked_lm_positions, masked_lm_ids, masked_lm_weights = create_masked_lm_predictions(
             token_ids,
             # pre-training defaults from Bert docs
@@ -513,19 +553,21 @@ def make_one_hot_encoder():
     return encoder
 
 
-def make_parser(abs_seq_len=128):
-    context_features = {cf: tf.io.FixedLenFeature([], dtype=tf.int64) for cf in all_context_features}
+def make_parser(abs_seq_len=512):  # Silly hard-coded :PP
+    context_features = {key: tf.io.FixedLenFeature([1], dtype=dtype)
+                        for key, dtype in context_features_mapping.items()}
 
     # TODO: check that our segment_ids convention matches Bert
     text_features = {
-        "op_token_ids": tf.io.FixedLenFeature([abs_seq_len], tf.int64),
-        "op_token_mask": tf.io.FixedLenFeature([abs_seq_len], tf.int64)
+        "token_ids": tf.io.FixedLenFeature([abs_seq_len], tf.int64),
+        "token_mask": tf.io.FixedLenFeature([abs_seq_len], tf.int64)
         # "segment_ids": tf.io.FixedLenFeature([abs_seq_len], tf.int64)
-    }
+    }  # NOTES: Huh, I guess we might not need segment_ids.
 
     _name_to_features = {**context_features, **text_features}
 
     def parser(record):
+        # print(context_features)
         tf_example = tf.io.parse_single_example(
             record,
             features=_name_to_features,
@@ -559,42 +601,6 @@ def make_normalize_score():
                 'normalized_score': norm_score}
 
     return normalize_score
-
-
-def make_input_fn_from_tfrecord(tokenizer, tfrecord='../dat/reddit/proc.tf_record',
-                                is_training=True, shuffle_buffer_size=1e6,
-                                seed=0):
-    def input_fn(params):
-        batch_size = params["batch_size"]
-        dataset = tf.data.TFRecordDataset(tfrecord)
-
-        if is_training:
-            dataset = dataset.repeat()
-            dataset = dataset.shuffle(buffer_size=shuffle_buffer_size)
-
-        # functions for additional processing
-        basic_parser = make_parser()  # parse from tf_record
-        unsupervised_parser = make_bert_unsupervised_parser()  # concats op and response together
-        masker = make_input_id_masker(tokenizer, seed)
-        encoder = make_one_hot_encoder()
-
-        data_processing = compose(basic_parser,
-                                  unsupervised_parser,
-                                  masker,
-                                  encoder)
-
-        dataset = dataset.map(data_processing, 4)
-
-        # def filter_test_fn(data):
-        #     return tf.equal(data['subreddit'], 1)
-
-        # dataset = dataset.filter(filter_test_fn)
-
-        dataset = dataset.batch(batch_size=batch_size, drop_remainder=True)
-
-        return dataset
-
-    return input_fn
 
 
 def main():
