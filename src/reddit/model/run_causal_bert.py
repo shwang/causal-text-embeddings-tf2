@@ -99,7 +99,7 @@ flags.DEFINE_string("test_splits", '9', "indices of test splits")
 # Flags specifically related to PeerRead experiment
 
 flags.DEFINE_string(
-    "treatment", "theorem_referenced",
+    "treatment", "gender",
     "Covariate used as treatment."
 )
 flags.DEFINE_string("subreddits", '13,6,8', "the list of subreddits to train on")
@@ -129,15 +129,15 @@ def _keras_format(features, labels):
     return features, labels, sample_weights
 
 
-def make_dataset(is_training: bool, do_masking=False):
+def make_dataset(is_training: bool, do_masking=False, force_keras_format=False):
     if FLAGS.simulated == 'real':
         labeler = make_real_labeler(FLAGS.treatment, 'log_score')
 
     elif FLAGS.simulated == 'attribute':
         labeler = make_subreddit_based_simulated_labeler(FLAGS.beta0, FLAGS.beta1, FLAGS.gamma, FLAGS.simulation_mode,
-                                                     seed=0)
+                                                         seed=0)
     else:
-        Exception("simulated flag not recognized")
+        raise Exception("simulated flag not recognized")
 
     tokenizer = tokenization.FullTokenizer(
         vocab_file=FLAGS.vocab_file, do_lower_case=FLAGS.do_lower_case)
@@ -166,11 +166,12 @@ def make_dataset(is_training: bool, do_masking=False):
         filter_train=is_training)
 
     batch_size = FLAGS.train_batch_size if is_training else FLAGS.eval_batch_size
-
     dataset = train_input_fn(params={'batch_size': batch_size})
 
     # format expected by Keras for training
-    if is_training:
+    if is_training or force_keras_format:
+        # Steven: We are relying on validation set to produce some loss metrics for report.
+        # Therefore, we always want to map into keras format.
         # dataset = filter_training(dataset)
         dataset = dataset.map(_keras_format, num_parallel_calls=tf.data.experimental.AUTOTUNE)
 
@@ -195,16 +196,16 @@ def make_dragonnet_metrics():
 
     CONT_NAMES = ['mse']
 
-    g_metrics = [m(name='metrics/' + n) for m, n in zip(METRICS, NAMES)]
+    g_metrics = [m(name='metrics/' + n) for m, n in zip(CONT_METRICS, CONT_NAMES)]
     q0_metrics = [m(name='metrics/' + n) for m, n in zip(CONT_METRICS, CONT_NAMES)]
-    q1_metrics = [m(name='metrics/' + n) for m, n in zip(CONT_METRICS, CONT_NAMES)]
+    # q1_metrics = [m(name='metrics/' + n) for m, n in zip(CONT_METRICS, CONT_NAMES)]
 
-    return {'g': g_metrics, 'q0': q0_metrics, 'q1': q1_metrics}
+    return {'g': g_metrics, 'q0': q0_metrics}
 
 
 def main(_):
     # Users should always run this script under TF 2.x
-    assert tf.version.VERSION.startswith('2.1')
+    assert tf.version.VERSION.startswith('2.')
     tf.random.set_seed(FLAGS.seed)
 
     # with tf.io.gfile.GFile(FLAGS.input_meta_data_path, 'rb') as reader:
@@ -219,7 +220,11 @@ def main(_):
     epochs = FLAGS.num_train_epochs
     # train_data_size = 11778
     train_data_size = 90000
-    steps_per_epoch = int(train_data_size / FLAGS.train_batch_size)  # 368
+    # LMAO WHAT?
+    # This is hard-coded here because TFRecordDataset does not store the length. =(
+    # But anyways, the actual data length is 417,895. Maybe there is a discrepancy because they dropped
+    # data with extremal values (vaguely remember something like this from the paper).
+    steps_per_epoch = int(train_data_size / FLAGS.train_batch_size)  # not "368", but 5625
     warmup_steps = int(epochs * train_data_size * 0.1 / FLAGS.train_batch_size)
     initial_lr = FLAGS.learning_rate
 
@@ -276,10 +281,12 @@ def main(_):
             if latest_checkpoint:
                 dragon_model.load_weights(latest_checkpoint)
 
+            # TODO(shwang): Note that the model has no unsupervised loss!
             dragon_model.compile(optimizer=optimizer,
-                                 loss={'g': 'binary_crossentropy', 'q0': 'mean_squared_error',
-                                       'q1': 'mean_squared_error'},
-                                 loss_weights={'g': FLAGS.treatment_loss_weight, 'q0': 0.1, 'q1': 0.1},
+                                 # note: I changed g to also be mean_squared_error.
+                                 # Removed the loss for q1 because it is unused.
+                                 loss={'g': 'mean_squared_error', 'q0': 'mean_squared_error'},
+                                 loss_weights={'g': FLAGS.treatment_loss_weight, 'q0': 0.1},
                                  weighted_metrics=make_dragonnet_metrics())
 
             summary_callback = tf.keras.callbacks.TensorBoard(FLAGS.model_dir, update_freq=128)
@@ -288,12 +295,14 @@ def main(_):
 
             callbacks = [summary_callback, checkpoint_callback]
 
+            val_data = make_dataset(is_training=False, do_masking=True, force_keras_format=True)
             dragon_model.fit(
                 x=keras_train_data,
-                # validation_data=evaluation_dataset,
+                validation_data=val_data,  # Where can I get my hands on this? =)
                 steps_per_epoch=steps_per_epoch,
+                # steps_per_epoch=1,
                 epochs=epochs,
-                # vailidation_steps=eval_steps,
+                # validation_steps=steps_per_epoch,  # Maybe I should use the length of the validation set instead?
                 callbacks=callbacks)
 
         # save a final model checkpoint (so we can restore weights into model w/o training idiosyncracies)
@@ -309,7 +318,6 @@ def main(_):
 
     # make predictions and write to file
     if FLAGS.mode != 'train_only':
-
         # create data and model w/o masking
         eval_data = make_dataset(is_training=False, do_masking=False)
         dragon_model, core_model = _get_dragon_model(do_masking=False)
@@ -335,9 +343,23 @@ def main(_):
         outs = data_df.join(predictions)
         with tf.io.gfile.GFile(FLAGS.prediction_file, "w") as writer:
             writer.write(outs.to_csv(sep="\t"))
+        print("Wrote predictions to {}".format(FLAGS.prediction_file))
+        
+        
+def silly_main():
+    def get_len(ds) -> int:
+        i = 0
+        for _ in ds:
+            i += 1
+        return i
+    raw_ds = tf.data.TFRecordDataset(["../dat/reddit/proc.tf_record"])
+    print(raw_ds)
+    x = get_len(raw_ds)
+    print(x)
 
 
 if __name__ == '__main__':
+    # silly_main()
     flags.mark_flag_as_required('bert_config_file')
     # flags.mark_flag_as_required('input_meta_data_path')
     # flags.mark_flag_as_required('model_dir')

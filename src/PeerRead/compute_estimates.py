@@ -45,7 +45,7 @@ def att_from_bert_tsv(tsv_path, test_split=True, trim=0.0):
 
     nuisance_dict = reduced_df.to_dict('series')
     nuisance_dict['prob_t'] = nuisance_dict['t'].mean()
-    estimates = att_estimates(**nuisance_dict, deps=0.0005)
+    estimates = att_estimates(**nuisance_dict, deps=0.0001)
 
     estimates['ground_truth'] = gt
     estimates['unadjusted_est'] = naive  # overwrite because trimming will screw this up

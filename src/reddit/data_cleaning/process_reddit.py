@@ -85,6 +85,10 @@ def bert_process_sentence(example_tokens, max_seq_length, tokenizer, segment=1):
     """
     # Account for [CLS] and [SEP] with "- 2"
     if len(example_tokens) > max_seq_length - 2:
+        print("Warning: Exceeded maximum sequence length. Truncating from {} to {} tokens.".format(
+            len(example_tokens) + 2,
+            max_seq_length,
+        ))
         example_tokens = example_tokens[0:(max_seq_length - 2)]
 
     # The convention in BERT for single sequences is:

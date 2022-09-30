@@ -1,0 +1,3 @@
+#/usr/bin/env bash
+include_dat="-v $(pwd)/dat:/causal/dat/"
+sudo docker run -v $(pwd)/src:/causal/src/ -v $(pwd)/output:/causal/output/ $include_dat -it --rm --gpus=all causal bash

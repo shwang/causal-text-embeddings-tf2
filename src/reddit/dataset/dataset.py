@@ -528,7 +528,7 @@ def make_parser(abs_seq_len=128):
     def parser(record):
         tf_example = tf.io.parse_single_example(
             record,
-            features=_name_to_features
+            features=_name_to_features,
         )
 
         # tf.Example only supports tf.int64, but the TPU only supports tf.int32.

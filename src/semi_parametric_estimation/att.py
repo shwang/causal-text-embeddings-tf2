@@ -191,7 +191,7 @@ def one_step_tmle(q_t0, q_t1, g, t, y, cross_ent_outcome=False, deps=0.001, max_
 
             old_loss = new_loss
 
-    print(f"total iters {}".format(i))
+    print("total iters {}".format(i))
 
     print("Warning: max number of iterations reached")
     q_old = (1 - t) * q0_old + t * q1_old
