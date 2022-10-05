@@ -50,13 +50,14 @@ python -m reddit.model.run_causal_bert \
   --train_batch_size=16 \
   --eval_batch_size=16 \
   --learning_rate=5e-5 \
-  --num_train_epochs=0 \
+  --num_train_epochs=1 \
   --subreddits=${SUBREDDITS} \
   --beta0=${BETA0} \
   --beta1=${BETA1} \
   --gamma=${GAMMA} \
   --prediction_file=${prediction_file} \
-  --model_dir=${tf_log_dir}
+  --model_dir=${tf_log_dir} \
+  # --include_aux=false
 
 #  --max_seq_length=512 \
 # --num_train_epochs=6

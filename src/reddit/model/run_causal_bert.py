@@ -94,6 +94,9 @@ flags.DEFINE_bool(
     "do_lower_case", True,
     "Whether to lower case the input text. Should be True for uncased "
     "models and False for cased models.")
+flags.DEFINE_bool(
+    "include_aux", True,
+    "Whether to use auxiliary variables")
 
 flags.DEFINE_integer("seed", 0, "Seed for rng.")
 
@@ -146,11 +149,12 @@ def _keras_format(features, labels):
     # one_hots = tf.one_hot(y, depth=13)
     # t = y = tf.random.normal(tf.shape(y))
     new_labels = {'g': t, 'q': y, Q_PRED_NAME: y} # , Q_PRED_ONE_HOT_NAME: one_hots}
-    more_treatment_raw = [labels[key] for key in AUX_FEATURE_NAMES]
-    more_treatment_raw = [tf.cast(feat, tf.float32) for feat in more_treatment_raw]
-    more_treatment = tf.concat(more_treatment_raw, axis=1)
-    new_features = dict(
-        **features, treatment=t, more_treatment=more_treatment)
+    new_features = dict(**features, treatment=t)
+    if FLAGS.include_aux:
+        more_treatment_raw = [labels[key] for key in AUX_FEATURE_NAMES]
+        more_treatment_raw = [tf.cast(feat, tf.float32) for feat in more_treatment_raw]
+        more_treatment = tf.concat(more_treatment_raw, axis=1)
+        new_features["more_treatment"] = more_treatment
     return new_features, new_labels# , sample_weights
 
 
@@ -303,7 +307,9 @@ def main(_):
                     binary_outcome=False,
                     use_unsup=do_masking,
                     max_predictions_per_seq=20,
-                    unsup_scale=1.))
+                    unsup_scale=1.,
+                    include_aux=FLAGS.include_aux,
+                ))
         else:
             dragon_model, core_model = bert_models.derpy_dragon_baseline(
                 bert_config,

@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 pushd src/
 
-export BERT_BASE_DIR=../pre-trained/uncased_L-12_H-768_A-12
-export INIT_FILE=../dat/reddit/model.ckpt-400000
+export BERT_BASE_DIR=../pre-trained/uncased_L-12_H-768_A-12.bak
 export OUTPUT_DIR=../output/reddit_embeddings
 
 mkdir -p ${OUTPUT_DIR}
@@ -63,7 +62,8 @@ python -m reddit.model.run_causal_bert \
   --gamma=${GAMMA} \
   --prediction_file=${prediction_file} \
   --model_dir=${tf_log_dir} \
-  --saved_path=${saved_path_final}
+  --saved_path=${saved_path_final} \
+  --include_aux=false
 
 #  --max_seq_length=512 \
 # --num_train_epochs=6

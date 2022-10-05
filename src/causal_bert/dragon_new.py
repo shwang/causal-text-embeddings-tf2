@@ -69,7 +69,9 @@ def dragon_model_ours(bert_config,
                       binary_outcome: bool = False,
                       use_unsup=False,
                       max_predictions_per_seq=20,
-                      unsup_scale=1.):
+                      unsup_scale=1.,
+                      include_aux=True,
+                      ):
     assert binary_outcome is False
     if use_unsup:
         pt_model, bert_model = pretrain_model(bert_config,
@@ -105,20 +107,23 @@ def dragon_model_ours(bert_config,
 
     treatment = tf.keras.layers.Input(
         shape=(1,), dtype=tf.float32, name='treatment')
-    more_treatment = tf.keras.layers.Input(
-        shape=(9,), dtype=tf.float32, name='more_treatment')
 
     more_inputs = {
         'treatment': treatment,
-        'more_treatment': more_treatment,
         # TODO(shwang): When adding more_treatment later, also
         #   use t_aux in `our_get_dragon_heads()`
     }
+    if include_aux:
+        more_treatment = tf.keras.layers.Input(
+            shape=(9,), dtype=tf.float32, name='more_treatment')
+        more_inputs['more_treatment'] = more_treatment
+    else:
+        more_treatment = None
     inputs.update(**more_inputs)
 
     pooled_output = bert_model.outputs[0]
 
-    head_model = our_get_dragon_heads()
+    head_model = our_get_dragon_heads(include_aux=include_aux)
     g, q, q_pred, q0_pred, q1_pred, q_pred_one_hot = head_model(
         pooled_output, treatment, more_treatment)
 
