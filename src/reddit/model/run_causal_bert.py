@@ -368,11 +368,13 @@ def main(_):
                 callbacks=callbacks)
 
         # save a final model checkpoint (so we can restore weights into model w/o training idiosyncracies)
-        model_export_path = tf_log_root / 'trained/dragon.ckpt'
+        model_export_path = log_dir / 'trained/dragon.ckpt'
         model_export_path.parent.mkdir(parents=True, exist_ok=True)
 
         checkpoint = tf.train.Checkpoint(model=dragon_model)
         saved_path = checkpoint.save(model_export_path)
+        # How does this different from trained/dragon.ckpt-1
+        # print(saved_path)
     else:
         saved_path = FLAGS.saved_path
 
