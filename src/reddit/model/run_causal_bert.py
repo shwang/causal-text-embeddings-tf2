@@ -428,6 +428,7 @@ def main(_):
 
         outs = data_df.join(predictions)
         prediction_path = log_dir / "predictions.tsv"
+        prediction_path.mkdir(parents=True, exist_ok=True)
         with tf.io.gfile.GFile(prediction_path, "w") as writer:
             writer.write(outs.to_csv(sep="\t"))
         print("Wrote predictions to {}".format(prediction_path))
