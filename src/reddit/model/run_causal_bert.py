@@ -369,7 +369,7 @@ def main(_):
 
         # save a final model checkpoint (so we can restore weights into model w/o training idiosyncracies)
         model_export_path = tf_log_root / 'trained/dragon.ckpt'
-        model_export_path.mkdir(parents=True, exist_ok=True)
+        model_export_path.parent.mkdir(parents=True, exist_ok=True)
 
         checkpoint = tf.train.Checkpoint(model=dragon_model)
         saved_path = checkpoint.save(model_export_path)
@@ -409,12 +409,6 @@ def main(_):
         out_dict['q'] = outputs[2].squeeze()
         out_dict['q0'] = outputs[3].squeeze()
         out_dict['q1'] = outputs[4].squeeze()
-
-        print("🐸 Begin generating predictions.tsv!")
-        out_dict = dragon_model.predict(
-            eval_data_keras,
-            callbacks=[TQDMPredictCallback()],
-        )
         # Okay, time to concat that stuff after.
         # out_dict2 = {k: np.concatenate(v) for k, v in out_dict.items()}
         # out_dict['q_one_hot'] = outputs[5].squeeze()
@@ -428,7 +422,7 @@ def main(_):
 
         outs = data_df.join(predictions)
         prediction_path = log_dir / "predictions.tsv"
-        prediction_path.mkdir(parents=True, exist_ok=True)
+        prediction_path.parent.mkdir(parents=True, exist_ok=True)
         with tf.io.gfile.GFile(prediction_path, "w") as writer:
             writer.write(outs.to_csv(sep="\t"))
         print("Wrote predictions to {}".format(prediction_path))
