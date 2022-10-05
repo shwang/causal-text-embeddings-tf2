@@ -4,3 +4,5 @@ tensorflow_hub
 randomname
 nltk
 bert-tensorflow
+tensorflow-addons
+focal-loss

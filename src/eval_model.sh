@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 pushd src/
 
-export BERT_BASE_DIR=../pre-trained/uncased_L-12_H-768_A-12.bak
+export BERT_BASE_DIR=../pre-trained/uncased_L-12_H-768_A-12
 export OUTPUT_DIR=../output/reddit_embeddings
 
 mkdir -p ${OUTPUT_DIR}

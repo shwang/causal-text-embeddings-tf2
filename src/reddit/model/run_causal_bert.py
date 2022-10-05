@@ -24,13 +24,14 @@ import os
 import pathlib
 import time
 
+import focal_loss
 import numpy as np
 import pandas as pd
 
 from absl import app
 from absl import flags
 import tensorflow as tf
-# import tensorflow_addons as tfa
+import tensorflow_addons as tfa
 import tqdm
 
 from tf_official.nlp import bert_modeling as modeling
@@ -127,6 +128,9 @@ flags.DEFINE_string("simulation_mode", 'simple', "simple, multiplicative, or int
 
 flags.DEFINE_string("prediction_file", "../output/predictions.tsv", "path where predictions (tsv) will be written")
 
+# flags.DEFINE_bool("focal_loss", True, "Whether to use focal loss.")
+flags.DEFINE_bool("focal_loss", False, "Whether to use focal loss.")
+
 FLAGS = flags.FLAGS
 
 
@@ -137,25 +141,6 @@ def make_unique_filename():
     timestamp = datetime.datetime.now().strftime(ISO_TIMESTAMP)
     rand_name = randomname.get_name()
     return f"{timestamp}_{rand_name}"
-
-Q_PRED_NAME = "tf.math.argmax"
-Q_PRED_ONE_HOT_NAME = "tf.one_hot"
-
-def _keras_format(features, labels):
-    # features, labels = sample
-    y = labels['outcome']
-    t = labels['treatment']
-    y = tf.cast(y, dtype=tf.int64)
-    # one_hots = tf.one_hot(y, depth=13)
-    # t = y = tf.random.normal(tf.shape(y))
-    new_labels = {'g': t, 'q': y, Q_PRED_NAME: y} # , Q_PRED_ONE_HOT_NAME: one_hots}
-    new_features = dict(**features, treatment=t)
-    if FLAGS.include_aux:
-        more_treatment_raw = [labels[key] for key in AUX_FEATURE_NAMES]
-        more_treatment_raw = [tf.cast(feat, tf.float32) for feat in more_treatment_raw]
-        more_treatment = tf.concat(more_treatment_raw, axis=1)
-        new_features["more_treatment"] = more_treatment
-    return new_features, new_labels# , sample_weights
 
 
 def make_dataset(is_training: bool, do_masking=False, force_keras_format=False):
@@ -207,6 +192,40 @@ def make_dataset(is_training: bool, do_masking=False, force_keras_format=False):
         dataset = _map_keras_format(dataset)
 
     return dataset
+
+
+Q_PRED_NAME = "tf.math.argmax"
+Q_PRED_ONE_HOT_NAME = "tf.one_hot"
+
+def _keras_format(features, labels):
+    # features, labels = sample
+    y = labels['outcome']
+    t = labels['treatment']
+    y = tf.cast(y, dtype=tf.int64)
+    # one_hots = tf.one_hot(y, depth=13)
+    # t = y = tf.random.normal(tf.shape(y))
+    new_labels = {'g': t, 'q': y, Q_PRED_NAME: y} # , Q_PRED_ONE_HOT_NAME: one_hots}
+    new_features = dict(**features, treatment=t)
+    if FLAGS.include_aux:
+        more_treatment_raw = [labels[key] for key in AUX_FEATURE_NAMES]
+        more_treatment_raw = [tf.cast(feat, tf.float32) for feat in more_treatment_raw]
+        more_treatment = tf.concat(more_treatment_raw, axis=1)
+        new_features["more_treatment"] = more_treatment
+    return new_features, new_labels# , sample_weights
+
+
+def _keras_format_y_one_hot(features, labels):
+    new_labels = dict(labels)
+    y = labels['q']
+    y2 = tf.one_hot(y, axis=1, depth=13)
+    y2 = tf.squeeze(y2, axis=2)
+    new_labels['q'] = y2
+    # breakpoint()
+    # print(y2)
+    # print(y2.shape)
+    # y2 = tf.squeeze(y2, axis=2)
+
+    return features, new_labels
 
 
 def _map_keras_format(ds):
@@ -319,7 +338,7 @@ def main(_):
         # WARNING: the original optimizer causes a bug where loss increases after first epoch
         # dragon_model.optimizer = optimization.create_optimizer(
         #     FLAGS.train_batch_size * initial_lr, steps_per_epoch * epochs, warmup_steps)
-        dragon_model.optimizer = tf.keras.optimizers.SGD(learning_rate=FLAGS.train_batch_size * initial_lr)
+        dragon_model.optimizer = tf.keras.optimizers.Adam(learning_rate=FLAGS.learning_rate)
         return dragon_model, core_model
 
     log_dir = tf_log_root / make_unique_filename()
@@ -328,7 +347,11 @@ def main(_):
         # training. strategy.scope context allows use of multiple devices
         with strategy.scope():
             keras_train_data = make_dataset(is_training=True, do_masking=FLAGS.do_masking)
-            keras_train_data.prefetch(4)
+            # Make keras format do the thing.
+            # Turn on one-hot quickly. By applying an outer wrapper.
+            # if FLAGS.focal_loss:
+            #     keras_train_data = keras_train_data.map(_keras_format_y_one_hot)
+            keras_train_data = keras_train_data.prefetch(4)
 
             dragon_model, core_model = _get_dragon_model(FLAGS.do_masking)
             optimizer = dragon_model.optimizer
@@ -341,18 +364,46 @@ def main(_):
             if latest_checkpoint:
                 dragon_model.load_weights(latest_checkpoint)
 
+            USE_CLASS_WEIGHT = False
+            if USE_CLASS_WEIGHT:
+                class_weight = np.array([
+                    1 / 169072,
+                    1 / 37802,
+                    1 / 13058,
+                    1 / 4080,
+                    1 / 1273,
+                    1 / 412,
+                    1 / 136,
+                    1 / 47,
+                    1 / 13,
+                    1,
+                    1,
+                    1,
+                    1,
+                ]) * 1000
+            else:
+                class_weight = None
+
+            if not FLAGS.focal_loss:
+                q_loss_fn = tf.keras.losses.SparseCategoricalCrossentropy()
+            else:
+                print("🐸 using focal loss.")
+                q_loss_fn = focal_loss.SparseCategoricalFocalLoss(
+                    gamma=0.25,
+                    class_weight=class_weight,
+                )
+
             # TODO(shwang): Note that the model has no unsupervised loss!
             dragon_model.compile(
                 run_eagerly=False,
                 optimizer=optimizer,
                 loss={
                     'g': 'mean_squared_error',
-                    # 'q': 'mean_squared_error',
-                    'q': tf.keras.losses.SparseCategoricalCrossentropy(),
+                    'q': q_loss_fn,
                 },
                 loss_weights={
                     'g': FLAGS.treatment_loss_weight,
-                    'q': 0.2,
+                    'q': 1,
                 },
                 weighted_metrics=make_dragonnet_metrics(),
             )
@@ -360,7 +411,9 @@ def main(_):
             summary_callback = tf.keras.callbacks.TensorBoard(log_dir, update_freq=100)
             print(f"🐸 [LOGGING] Logging to {log_dir}")
             checkpoint_dir = os.path.join(log_dir, 'model_checkpoint.{epoch:02d}')
-            checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(checkpoint_dir, save_weights_only=True, period=10)
+            checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
+                checkpoint_dir,
+                save_weights_only=True)
 
             callbacks = [summary_callback, checkpoint_callback]
 

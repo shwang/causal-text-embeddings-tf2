@@ -26,7 +26,8 @@ input_half_half=../dat/shwang-half/half/proc.tf_record
 input_half_full=../dat/shwang-half/full/proc.tf_record
 
 # DATA_FILE=$input_half_half
-DATA_FILE=$input_half_tiny
+# DATA_FILE=$input_half
+DATA_FILE=$input_half_half
 # DATA_FILE=$input_reddit
 
 # Incompatible flags from TF1 run script.
@@ -49,14 +50,15 @@ python -m reddit.model.run_causal_bert \
   --max_seq_length=256 \
   --train_batch_size=16 \
   --eval_batch_size=16 \
-  --learning_rate=5e-5 \
-  --num_train_epochs=1 \
+  --learning_rate=1e-5 \
+  --num_train_epochs=5 \
   --subreddits=${SUBREDDITS} \
   --beta0=${BETA0} \
   --beta1=${BETA1} \
   --gamma=${GAMMA} \
   --prediction_file=${prediction_file} \
   --model_dir=${tf_log_dir} \
+  --focal_loss=true
   # --include_aux=false
 
 #  --max_seq_length=512 \
