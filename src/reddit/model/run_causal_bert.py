@@ -18,24 +18,30 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import collections
+import functools
 import os
+import pathlib
 import time
 
 import numpy as np
 import pandas as pd
-import pathlib
 
 from absl import app
 from absl import flags
 import tensorflow as tf
+# import tensorflow_addons as tfa
+import tqdm
 
 from tf_official.nlp import bert_modeling as modeling
 from tf_official.nlp.bert import tokenization, common_flags
 from tf_official.utils.misc import tpu_lib
-from causal_bert import bert_models
+from causal_bert import bert_models, dragon_new as our_bert_models
 from causal_bert.data_utils import dataset_to_pandas_df, filter_training
 
-from reddit.dataset.dataset import make_input_fn_from_file, make_real_labeler, make_subreddit_based_simulated_labeler
+from reddit.dataset.dataset import (make_input_fn_from_file, make_real_labeler, make_subreddit_based_simulated_labeler,
+                                    AUX_FEATURE_NAMES)
+
 
 common_flags.define_common_bert_flags()
 
@@ -49,7 +55,7 @@ flags.DEFINE_string('saved_path', None,
                     'Relevant only if mode is predict_only. Path to pre-trained model')
 
 flags.DEFINE_bool(
-    "do_masking", True,
+    "do_masking", False,
     "Whether to randomly mask input words during training (serves as a sort of regularization)")
 
 flags.DEFINE_float("treatment_loss_weight", 1.0, "how to weight the treatment prediction term in the loss")
@@ -76,8 +82,8 @@ flags.DEFINE_integer(
 flags.DEFINE_integer('max_predictions_per_seq', 20,
                      'Maximum predictions per sequence_output.')
 
-flags.DEFINE_integer('train_batch_size', 64, 'Batch size for training.')
-flags.DEFINE_integer('eval_batch_size', 64, 'Batch size for evaluation.')
+flags.DEFINE_integer('train_batch_size', 16, 'Batch size for training.')
+flags.DEFINE_integer('eval_batch_size', 16, 'Batch size for evaluation.')
 flags.DEFINE_string(
     'hub_module_url', None, 'TF-Hub path/url to Bert module. '
                             'If specified, init_checkpoint flag should not be used.')
@@ -121,13 +127,31 @@ flags.DEFINE_string("prediction_file", "../output/predictions.tsv", "path where 
 FLAGS = flags.FLAGS
 
 
+def make_unique_filename():
+    import datetime
+    import randomname
+    ISO_TIMESTAMP = "%Y%m%d_%H%M%S"
+    timestamp = datetime.datetime.now().strftime(ISO_TIMESTAMP)
+    rand_name = randomname.get_name()
+    return f"{timestamp}_{rand_name}"
+
+Q_PRED_NAME = "tf.math.argmax"
+Q_PRED_ONE_HOT_NAME = "tf.one_hot"
+
 def _keras_format(features, labels):
     # features, labels = sample
     y = labels['outcome']
-    t = tf.cast(labels['treatment'], tf.float32)
-    labels = {'g': labels['treatment'], 'q0': y, 'q1': y}
-    sample_weights = {'q0': 1 - t, 'q1': t}
-    return features, labels, sample_weights
+    t = labels['treatment']
+    y = tf.cast(y, dtype=tf.int64)
+    # one_hots = tf.one_hot(y, depth=13)
+    # t = y = tf.random.normal(tf.shape(y))
+    new_labels = {'g': t, 'q': y, Q_PRED_NAME: y} # , Q_PRED_ONE_HOT_NAME: one_hots}
+    more_treatment_raw = [labels[key] for key in AUX_FEATURE_NAMES]
+    more_treatment_raw = [tf.cast(feat, tf.float32) for feat in more_treatment_raw]
+    more_treatment = tf.concat(more_treatment_raw, axis=1)
+    new_features = dict(
+        **features, treatment=t, more_treatment=more_treatment)
+    return new_features, new_labels# , sample_weights
 
 
 def make_dataset(is_training: bool, do_masking=False, force_keras_format=False):
@@ -176,23 +200,38 @@ def make_dataset(is_training: bool, do_masking=False, force_keras_format=False):
         # Steven: We are relying on validation set to produce some loss metrics for report.
         # Therefore, we always want to map into keras format.
         # dataset = filter_training(dataset)
-        dataset = dataset.map(_keras_format, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-
-    dataset = dataset.prefetch(4)
+        dataset = _map_keras_format(dataset)
 
     return dataset
 
 
+def _map_keras_format(ds):
+    return ds.map(_keras_format,
+                  num_parallel_calls=tf.data.experimental.AUTOTUNE)
+
+
 def make_dragonnet_metrics():
-    METRICS = [
-        tf.keras.metrics.BinaryAccuracy,
-        tf.keras.metrics.Precision,
-        tf.keras.metrics.Recall,
-        tf.keras.metrics.AUC
-    ]
+    Q_LABEL_METRICS = dict(
+        accuracy=tf.keras.metrics.Accuracy,
+        # prec=tf.keras.metrics.Precision,
+        # recall=tf.keras.metrics.Recall,
+        # auc=tf.keras.metrics.AUC,
+    )
 
-    NAMES = ['binary_accuracy', 'precision', 'recall', 'auc']
+    # Q_PRED_ONE_HOT_METRICS = dict(
+    #     f1_weighted=functools.partial(tfa.metrics.F1Score, num_classes=13, average="weighted"),
+    # )
 
+    METRICS = dict(
+        xent=tf.keras.losses.SparseCategoricalCrossentropy,
+        # tf.keras.metrics.Precision,
+        # tf.keras.metrics.Recall,
+        # tf.keras.metrics.AUC,
+        # functools.partial(tfa.metrics.F1Score, num_classes=13, average="weighted"),
+    )
+
+    # NAMES = ['binary_accuracy', 'precision', 'recall', 'auc', 'f1_score_weighted']
+    NAMES = ['xent']
     CONT_METRICS = [
         tf.keras.metrics.MeanSquaredError
     ]
@@ -200,10 +239,13 @@ def make_dragonnet_metrics():
     CONT_NAMES = ['mse']
 
     g_metrics = [m(name='metrics/' + n) for m, n in zip(CONT_METRICS, CONT_NAMES)]
-    q0_metrics = [m(name='metrics/' + n) for m, n in zip(CONT_METRICS, CONT_NAMES)]
-    # q1_metrics = [m(name='metrics/' + n) for m, n in zip(CONT_METRICS, CONT_NAMES)]
-
-    return {'g': g_metrics, 'q0': q0_metrics}
+    q_metrics = [metric(name='metrics/' + k) for k, metric in METRICS.items()]
+    q_pred_metrics = [metric(name='metrics/q_pred/' + k) for k, metric in Q_LABEL_METRICS.items()]
+    # q_pred_one_hot_metrics = [metric(name='metrics/q_pred/' + k) for k, metric in Q_PRED_ONE_HOT_METRICS.items()]
+    return {'g': g_metrics, 'q': q_metrics,
+            Q_PRED_NAME: q_pred_metrics,
+            # Q_PRED_ONE_HOT_NAME: q_pred_one_hot_metrics,
+            }
 
 
 def main(_):
@@ -211,8 +253,10 @@ def main(_):
     assert tf.version.VERSION.startswith('2.')
     tf.random.set_seed(FLAGS.seed)
 
-    if not FLAGS.model_dir:
-        FLAGS.model_dir = '/tmp/bert20/'
+    if FLAGS.model_dir:
+        tf_log_root = pathlib.Path(FLAGS.model_dir)
+    else:
+        tf_log_root = pathlib.Path('../output/gender_uncertainty_logs/')
     #
     # Configuration stuff
     #
@@ -225,10 +269,12 @@ def main(_):
     # train_data_size = 90000
 
     train_data_size = get_tf_ds_len(FLAGS.input_files)
+    print(f"Counted training {train_data_size} examples.")
     # Aww I'm so clever =) 💆
-    train_data_size = 50
+    # train_data_size = 50
 
-    steps_per_epoch = int(train_data_size / FLAGS.train_batch_size)  # not "368", but 5625
+    steps_per_epoch = int(train_data_size / FLAGS.train_batch_size) * 0.9
+    steps_per_val_epoch = steps_per_epoch * 0.1
     warmup_steps = int(epochs * train_data_size * 0.1 / FLAGS.train_batch_size)
     initial_lr = FLAGS.learning_rate
 
@@ -250,7 +296,8 @@ def main(_):
     def _get_dragon_model(do_masking):
         if not FLAGS.fixed_feature_baseline:
             dragon_model, core_model = (
-                bert_models.dragon_model(
+                # bert_models.dragon_model(
+                our_bert_models.dragon_model_ours(
                     bert_config,
                     max_seq_length=FLAGS.max_seq_length,
                     binary_outcome=False,
@@ -269,10 +316,13 @@ def main(_):
         dragon_model.optimizer = tf.keras.optimizers.SGD(learning_rate=FLAGS.train_batch_size * initial_lr)
         return dragon_model, core_model
 
+    log_dir = tf_log_root / make_unique_filename()
+
     if (FLAGS.mode == 'train_and_predict') or (FLAGS.mode == 'train_only'): 
         # training. strategy.scope context allows use of multiple devices
         with strategy.scope():
             keras_train_data = make_dataset(is_training=True, do_masking=FLAGS.do_masking)
+            keras_train_data.prefetch(4)
 
             dragon_model, core_model = _get_dragon_model(FLAGS.do_masking)
             optimizer = dragon_model.optimizer
@@ -286,36 +336,40 @@ def main(_):
                 dragon_model.load_weights(latest_checkpoint)
 
             # TODO(shwang): Note that the model has no unsupervised loss!
-            dragon_model.compile(optimizer=optimizer,
-                                 # note: I changed g to also be mean_squared_error.
-                                 # Removed the loss for q1 because it is unused.
-                                 loss={'g': 'mean_squared_error', 'q0': 'mean_squared_error'},
-                                 loss_weights={'g': FLAGS.treatment_loss_weight, 'q0': 0.1},
-                                 weighted_metrics=make_dragonnet_metrics())
+            dragon_model.compile(
+                run_eagerly=False,
+                optimizer=optimizer,
+                loss={
+                    'g': 'mean_squared_error',
+                    # 'q': 'mean_squared_error',
+                    'q': tf.keras.losses.SparseCategoricalCrossentropy(),
+                },
+                loss_weights={
+                    'g': FLAGS.treatment_loss_weight,
+                    'q': 0.2,
+                },
+                weighted_metrics=make_dragonnet_metrics(),
+            )
 
-            summary_callback = tf.keras.callbacks.TensorBoard(FLAGS.model_dir, update_freq=128)
-            checkpoint_dir = os.path.join(FLAGS.model_dir, 'model_checkpoint.{epoch:02d}')
+            summary_callback = tf.keras.callbacks.TensorBoard(log_dir, update_freq=100)
+            print(f"🐸 [LOGGING] Logging to {log_dir}")
+            checkpoint_dir = os.path.join(log_dir, 'model_checkpoint.{epoch:02d}')
             checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(checkpoint_dir, save_weights_only=True, period=10)
 
             callbacks = [summary_callback, checkpoint_callback]
 
-            # Oof, does this even make sense with the do_masking..? Maybe.
-            #  Yet another uncertainty.
-            val_data = make_dataset(is_training=False, do_masking=True, force_keras_format=True)
+            val_data = make_dataset(is_training=False, do_masking=FLAGS.do_masking, force_keras_format=True)
             dragon_model.fit(
                 x=keras_train_data,
-                validation_data=val_data,  # Where can I get my hands on this? =)
+                # validation_data=val_data,  # Where can I get my hands on this? =)
                 steps_per_epoch=steps_per_epoch,
-                # steps_per_epoch=1,
                 epochs=epochs,
-                # validation_steps=steps_per_epoch,  # Maybe I should use the length of the validation set instead?
+                # validation_steps=steps_per_val_epoch,
                 callbacks=callbacks)
 
         # save a final model checkpoint (so we can restore weights into model w/o training idiosyncracies)
-        if FLAGS.model_export_path:
-            model_export_path = FLAGS.model_export_path
-        else:
-            model_export_path = os.path.join(FLAGS.model_dir, 'trained/dragon.ckpt')
+        model_export_path = tf_log_root / 'trained/dragon.ckpt'
+        model_export_path.mkdir(parents=True, exist_ok=True)
 
         checkpoint = tf.train.Checkpoint(model=dragon_model)
         saved_path = checkpoint.save(model_export_path)
@@ -326,6 +380,8 @@ def main(_):
     if FLAGS.mode != 'train_only':
         # create data and model w/o masking
         eval_data = make_dataset(is_training=False, do_masking=False)
+
+        eval_data_keras = _map_keras_format(eval_data)
         dragon_model, core_model = _get_dragon_model(do_masking=False)
         # reload the model weights (necessary because we've obliterated the masking)
         checkpoint = tf.train.Checkpoint(model=dragon_model)
@@ -334,22 +390,47 @@ def main(_):
         dragon_model.add_loss(lambda: 0)
         dragon_model.compile()
 
-        outputs = dragon_model.predict(x=eval_data)
+        cached_data = []
+        for batch in eval_data_keras:
+            cached_data.append(batch)
+        n_batches = len(cached_data)
+        del cached_data
+
+        print("🐸 Begin generating predictions.tsv!")
+        outputs = dragon_model.predict(
+            eval_data_keras,
+            callbacks=[TQDMPredictCallback(total=n_batches)],
+        )
 
         out_dict = {}
         out_dict['g'] = outputs[0].squeeze()
-        out_dict['q0'] = outputs[1].squeeze()
-        out_dict['q1'] = outputs[2].squeeze()
+        # This is a distribution, not meant for saving.
+        # out_dict['q'] = outputs[1].squeeze()
+        out_dict['q'] = outputs[2].squeeze()
+        out_dict['q0'] = outputs[3].squeeze()
+        out_dict['q1'] = outputs[4].squeeze()
 
+        print("🐸 Begin generating predictions.tsv!")
+        out_dict = dragon_model.predict(
+            eval_data_keras,
+            callbacks=[TQDMPredictCallback()],
+        )
+        # Okay, time to concat that stuff after.
+        # out_dict2 = {k: np.concatenate(v) for k, v in out_dict.items()}
+        # out_dict['q_one_hot'] = outputs[5].squeeze()
+
+        #     # out_dict['q'].append(outputs[2].numpy().squeeze())
+        #     # out_dict['q0'].append(outputs[3].numpy().squeeze())
+        #     # out_dict['q1'].append(outputs[4].numpy().squeeze())
         predictions = pd.DataFrame(out_dict)
-
         label_dataset = eval_data.map(lambda f, l: l)
         data_df = dataset_to_pandas_df(label_dataset)
 
         outs = data_df.join(predictions)
-        with tf.io.gfile.GFile(FLAGS.prediction_file, "w") as writer:
+        prediction_path = log_dir / "predictions.tsv"
+        with tf.io.gfile.GFile(prediction_path, "w") as writer:
             writer.write(outs.to_csv(sep="\t"))
-        print("Wrote predictions to {}".format(FLAGS.prediction_file))
+        print("Wrote predictions to {}".format(prediction_path))
         
         
 def silly_main(path):
@@ -379,9 +460,42 @@ SMALL_DS_PATH = pathlib.Path("../dat/shwang_small/proc.tf_record")
 FULL_DS_PATH = pathlib.Path("../dat/shwang_full/proc.tf_record")
 
 
+class TQDMPredictCallback(tf.keras.callbacks.Callback):
+    def __init__(self, custom_tqdm_instance=None, tqdm_cls=tqdm.tqdm, **tqdm_params):
+        super().__init__()
+        self.tqdm_cls = tqdm_cls
+        self.tqdm_progress = None
+        self.prev_predict_batch = None
+        self.custom_tqdm_instance = custom_tqdm_instance
+        self.tqdm_params = tqdm_params
+
+    def on_predict_batch_begin(self, batch, logs=None):
+        pass
+
+    def on_predict_batch_end(self, batch, logs=None):
+        self.tqdm_progress.update(batch - self.prev_predict_batch)
+        self.prev_predict_batch = batch
+
+    def on_predict_begin(self, logs=None):
+        self.prev_predict_batch = 0
+        if self.custom_tqdm_instance:
+            self.tqdm_progress = self.custom_tqdm_instance
+            return
+
+        # total = self.params.get('steps')
+        # if total:
+        #     total -= 1
+
+        self.tqdm_progress = self.tqdm_cls(**self.tqdm_params)
+
+    def on_predict_end(self, logs=None):
+        if self.tqdm_progress is not None and not self.custom_tqdm_instance:
+            self.tqdm_progress.close()
+
+
 if __name__ == '__main__':
-    # tf.data.experimental.enable_debug_mode()
     # silly_main(SMALL_DS_PATH)
+    # tf.data.experimental.enable_debug_mode()  # using tensorflow 2.5.0rc0
     flags.mark_flag_as_required('bert_config_file')
     # flags.mark_flag_as_required('input_meta_data_path')
     # flags.mark_flag_as_required('model_dir')

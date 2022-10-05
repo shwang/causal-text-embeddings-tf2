@@ -57,11 +57,29 @@ all_context_features = ['author',
                         'many_split',
                         'index']
 
+ffloat = tf.float32
+fint = tf.int64
+
+auxiliary_features = dict(
+    word_number=ffloat,
+    sentence_placement=ffloat,
+    sentence_number=fint,
+    avg_sentence_length=ffloat,
+    averagecitations=ffloat,
+    numberauthors=fint,
+    yearPub=fint,
+    weighteda1hindex=fint,
+    weightedi10index=fint,
+)
+
+AUX_FEATURE_NAMES = list(auxiliary_features.keys())
+
 context_features_mapping = dict(
     male_ratio=tf.float32,
     uncertainty_output=tf.float32,
     index=tf.int64,
     many_split=tf.int64,
+    **auxiliary_features,
 )
 
 all_context_features = [
@@ -371,6 +389,7 @@ def _make_bert_compatifier(do_masking):
 
         y_keys = ["outcome", "treatment", "in_dev", "in_test", "in_train",
                   "y0", "y1", "index"]
+        y_keys.extend(AUX_FEATURE_NAMES)
         y = {k: data[k] for k in y_keys}
         return x, y
 
@@ -435,7 +454,6 @@ def dataset_processing(dataset, parser, masker, labeler, do_masking, is_training
             return tf.equal(label['in_train'], 1)
 
         dataset = dataset.filter(filter_test_fn)
-
 
     if is_training:
         dataset = dataset.batch(batch_size=batch_size, drop_remainder=True)
@@ -567,7 +585,6 @@ def make_parser(abs_seq_len=512):  # Silly hard-coded :PP
     _name_to_features = {**context_features, **text_features}
 
     def parser(record):
-        # print(context_features)
         tf_example = tf.io.parse_single_example(
             record,
             features=_name_to_features,

@@ -197,7 +197,7 @@ def process_reddit_dataset(data_dir, out_dir, out_file, max_abs_len, tokenizer, 
     records = df.to_dict('records')
     FAST = True
     if FAST:
-        records = records[::1000]
+        records = records[::100]
     n_records = len(records)
     print("Hello, I prioritize my scalp, and I loaded n={} records.".format(n_records))
     print("The columns that I loaded are: {}".format(df.columns))
@@ -232,11 +232,12 @@ def process_reddit_dataset(data_dir, out_dir, out_file, max_abs_len, tokenizer, 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data-dir', type=str, default=None)
-    # parser.add_argument('--out-dir', type=str, default='../tmp/confidence')
-    parser.add_argument('--out-dir', type=str, default='../dat/shwang_tiny')
+    parser.add_argument('--out-dir', type=str, default='../tmp/confidence')
+    # parser.add_argument('--out-dir', type=str, default='../dat/shwang-half/tiny')
     parser.add_argument('--out-file', type=str, default='proc.tf_record')
     parser.add_argument('--vocab-file', type=str, default='../pre-trained/uncased_L-12_H-768_A-12/vocab.txt')
-    parser.add_argument('--max-abs-len', type=int, default=512)
+    # parser.add_argument('--max-abs-len', type=int, default=512)
+    parser.add_argument('--max-abs-len', type=int, default=256)
     parser.add_argument('--subsample', type=int, default=0)
     parser.add_argument('--use-latest-reddit', type=bool, default=True)
 

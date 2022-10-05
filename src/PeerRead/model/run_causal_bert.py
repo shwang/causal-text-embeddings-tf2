@@ -121,15 +121,6 @@ flags.DEFINE_string("prediction_file", "../output/predictions.tsv", "path where 
 FLAGS = flags.FLAGS
 
 
-# def make_unique_filename():
-#     import datetime
-#     import randomname
-#     ISO_TIMESTAMP = "%Y%m%d_%H%M%S"
-#     timestamp = datetime.datetime.now().strftime(ISO_TIMESTAMP)
-#     rand_name = randomname.get_name()
-#     return f"{timestamp}_{rand_name}"  # To .format() notation for containers
-
-
 def _keras_format(features, labels):
     # features, labels = sample
     y = labels['outcome']
@@ -202,7 +193,8 @@ def make_dragonnet_metrics():
         tf.keras.metrics.BinaryAccuracy,
         tf.keras.metrics.Precision,
         tf.keras.metrics.Recall,
-        tf.keras.metrics.AUC
+        tf.keras.metrics.F1Score,
+        tf.keras.metrics.AUC,
     ]
 
     NAMES = ['binary_accuracy', 'precision', 'recall', 'auc']

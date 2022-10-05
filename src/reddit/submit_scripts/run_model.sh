@@ -5,7 +5,6 @@ export INIT_FILE=../dat/reddit/model.ckpt-400000
 export OUTPUT_DIR=../output/reddit_embeddings
 
 mkdir -p ${OUTPUT_DIR}
-ls -l ${OUTPUT_DIR}
 prediction_file="${OUTPUT_DIR}/predictions.tsv"
 
 #13,6,8 are keto, okcupid, childfree
@@ -15,12 +14,19 @@ export BETA0=1.0
 export BETA1=1.0
 export GAMMA=1.0
 
-input_reddit=../dat/reddit/proc.tf_record
-input_tiny=../dat/shwang_tiny/proc.tf_record
-input_small=../dat/shwang_small/proc.tf_record
-input_full=../dat/shwang_full/proc.tf_record
+tf_log_dir=../output/gender_uncertainty_tf/
 
-DATA_FILE=$input_tiny
+input_reddit=../dat/reddit/proc.tf_record
+input_tiny=../dat/shwang/tiny/proc.tf_record
+input_small=../dat/shwang/small/proc.tf_record
+input_half=../dat/shwang/half/proc.tf_record
+input_full=../dat/shwang/full/proc.tf_record
+input_half_tiny=../dat/shwang-half/tiny/proc.tf_record
+input_half_half=../dat/shwang-half/half/proc.tf_record
+input_half_full=../dat/shwang-half/full/proc.tf_record
+
+# DATA_FILE=$input_half_half
+DATA_FILE=$input_half_tiny
 # DATA_FILE=$input_reddit
 
 # Incompatible flags from TF1 run script.
@@ -40,13 +46,18 @@ python -m reddit.model.run_causal_bert \
   --bert_config_file=${BERT_BASE_DIR}/bert_config.json \
   --dev_splits=0 \
   --test_splits=0 \
-  --max_seq_length=512 \
+  --max_seq_length=256 \
   --train_batch_size=16 \
-  --learning_rate=3e-5 \
-  --num_train_epochs=2 \
+  --eval_batch_size=16 \
+  --learning_rate=5e-5 \
+  --num_train_epochs=0 \
   --subreddits=${SUBREDDITS} \
   --beta0=${BETA0} \
   --beta1=${BETA1} \
   --gamma=${GAMMA} \
-  --prediction_file=${prediction_file}
-#  --init_checkpoint=${INIT_FILE}
+  --prediction_file=${prediction_file} \
+  --model_dir=${tf_log_dir}
+
+#  --max_seq_length=512 \
+# --num_train_epochs=6
+# --num_train_epochs=16
