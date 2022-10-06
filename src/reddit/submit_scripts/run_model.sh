@@ -27,6 +27,7 @@ input_half_full=../dat/shwang-half/full/proc.tf_record
 
 # DATA_FILE=$input_half_half
 # DATA_FILE=$input_half
+# DATA_FILE=$input_half_half
 DATA_FILE=$input_half_half
 # DATA_FILE=$input_reddit
 
@@ -58,7 +59,7 @@ python -m reddit.model.run_causal_bert \
   --gamma=${GAMMA} \
   --prediction_file=${prediction_file} \
   --model_dir=${tf_log_dir} \
-  --focal_loss=true
+  # --focal_loss=true
   # --include_aux=false
 
 #  --max_seq_length=512 \

@@ -16,8 +16,9 @@ export GAMMA=1.0
 
 tf_log_dir=../output/gender_uncertainty_tf/
 
-# TODO: Move me up!
-saved_path_root=../output/gender_uncertainty_tf/20221003_224922_future-poltergeist
+# TODO(shwang) Do the right now
+# saved_path_root=../output/gender_uncertainty_tf/20221003_224922_future-poltergeist
+saved_path_root=~/scratch/causal/20221005_225459_careful-age
 saved_path_final=${saved_path_root}/trained/dragon.ckpt-1
 
 
@@ -31,7 +32,7 @@ input_half_half=../dat/shwang-half/half/proc.tf_record
 input_half_full=../dat/shwang-half/full/proc.tf_record
 
 # DATA_FILE=$input_half_half
-DATA_FILE=$input_half_tiny
+DATA_FILE=$input_half_half
 # DATA_FILE=$input_reddit
 
 # Incompatible flags from TF1 run script.
@@ -63,7 +64,7 @@ python -m reddit.model.run_causal_bert \
   --prediction_file=${prediction_file} \
   --model_dir=${tf_log_dir} \
   --saved_path=${saved_path_final} \
-  --include_aux=false
+  --include_aux=true
 
 #  --max_seq_length=512 \
 # --num_train_epochs=6

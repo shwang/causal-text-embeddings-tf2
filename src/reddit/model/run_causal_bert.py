@@ -179,7 +179,9 @@ def make_dataset(is_training: bool, do_masking=False, force_keras_format=False):
         shuffle_buffer_size=25000,  # note: bert hardcoded this, and I'm following suit
         seed=FLAGS.seed,
         labeler=labeler,
-        filter_train=is_training)
+        filter_train=is_training,
+        filter_test=(not is_training),
+    )
 
     batch_size = FLAGS.train_batch_size if is_training else FLAGS.eval_batch_size
     dataset = train_input_fn(params={'batch_size': batch_size})
@@ -454,6 +456,8 @@ def main(_):
             cached_data.append(batch)
         n_batches = len(cached_data)
         del cached_data
+        # breakpoint()
+        # print(n_batches)
 
         print("🐸 Begin generating predictions.tsv!")
         outputs = dragon_model.predict(
@@ -468,6 +472,11 @@ def main(_):
         out_dict['q'] = outputs[2].squeeze()
         out_dict['q0'] = outputs[3].squeeze()
         out_dict['q1'] = outputs[4].squeeze()
+
+        q_logits = outputs[5]
+        q0_logits = outputs[6]
+        q1_logits = outputs[6]
+
         # Okay, time to concat that stuff after.
         # out_dict2 = {k: np.concatenate(v) for k, v in out_dict.items()}
         # out_dict['q_one_hot'] = outputs[5].squeeze()
@@ -485,8 +494,22 @@ def main(_):
         with tf.io.gfile.GFile(prediction_path, "w") as writer:
             writer.write(outs.to_csv(sep="\t"))
         print("Wrote predictions to {}".format(prediction_path))
-        
-        
+
+        logits_path = log_dir / "logits.npz"
+        np.savez_compressed(
+            logits_path,
+            q_logits=q_logits,
+            q0_logits=q0_logits,
+            q1_logits=q1_logits,
+        )
+        print(f"🐸 Saved logits to {logits_path}.")
+        # if True:
+        #     print(f"Now attempting to reload")
+        #     loaded_logits = np.load(logits_path)
+        #     breakpoint()
+        #     print(loaded_logits)
+
+
 def silly_main(path):
     def get_ds_len(ds) -> int:
         i = 0

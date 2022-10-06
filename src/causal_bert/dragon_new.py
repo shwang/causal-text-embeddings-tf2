@@ -39,8 +39,9 @@ def our_get_dragon_heads(include_aux: bool = True):
             name="q",
         )
 
-        q = model(imp)  # name: q
-
+        q_logits = model(imp)  # name: q
+        q0_logits = model(imp0)
+        q1_logits = model(imp1)
         #  def rename(x, name: str):
         #      lamb = tf.keras.layers.Lambda(lambda t: t, name=name)
         #      return lamb(x)
@@ -48,10 +49,10 @@ def our_get_dragon_heads(include_aux: bool = True):
         # Naming (for keras output references later) is unfortunate.
         #   I tried a few ways to rename these outputs, including name
         #   scopes to no avail.
-        q_pred = tf.argmax(q, axis=1, name="q_pred")  # name: tf.math.argmax
-        q0_pred = tf.argmax(model(imp0), axis=1, name="q0_pred")  # tf.math.argmax_1
-        q1_pred = tf.argmax(model(imp1), axis=1, name="q1_pred")  # tf.math.argmax_2
-        q_pred_onehot = tf.one_hot(q_pred, depth=13)
+        q_pred = tf.argmax(q_logits, axis=1, name="q_pred")  # name: tf.math.argmax
+        q0_pred = tf.argmax(q0_logits, axis=1, name="q0_pred")  # tf.math.argmax_1
+        q1_pred = tf.argmax(q1_logits, axis=1, name="q1_pred")  # tf.math.argmax_2
+        # q_pred_onehot = tf.one_hot(q_pred, depth=13)
 
         g = tf.keras.layers.Dense(200, activation='relu')(z)
         g = tf.keras.layers.Dense(200, activation='relu')(g)
@@ -59,7 +60,8 @@ def our_get_dragon_heads(include_aux: bool = True):
         # note: They only have a linear+sigmoid network for g.
         # Maybe adding more layers will help.
 
-        return g, q, q_pred, q0_pred, q1_pred, q_pred_onehot
+        return (g, q_logits, q_pred, q0_pred, q1_pred,
+                q_logits, q0_logits, q1_logits)
 
     return dragon_heads
 
@@ -124,8 +126,8 @@ def dragon_model_ours(bert_config,
     pooled_output = bert_model.outputs[0]
 
     head_model = our_get_dragon_heads(include_aux=include_aux)
-    g, q, q_pred, q0_pred, q1_pred, q_pred_one_hot = head_model(
-        pooled_output, treatment, more_treatment)
+    g, q, q_pred, q0_pred, q1_pred, q_logits, \
+        q0_logits, q1_logits = head_model(pooled_output, treatment, more_treatment)
 
     # Oh interesting, we could insert output here.
     # output = tf.keras.layers.Dropout(rate=bert_config.hidden_dropout_prob)(
@@ -133,7 +135,7 @@ def dragon_model_ours(bert_config,
 
     dragon_model = tf.keras.Model(
         inputs=inputs,
-        outputs=[g, q, q_pred, q0_pred, q1_pred, q_pred_one_hot])
+        outputs=[g, q, q_pred, q0_pred, q1_pred, q_logits, q0_logits, q1_logits])
     dragon_model.add_loss(unsup_loss)
 
     return dragon_model, bert_model
