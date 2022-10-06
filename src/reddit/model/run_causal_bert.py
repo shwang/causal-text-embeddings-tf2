@@ -411,9 +411,7 @@ def main(_):
             summary_callback = tf.keras.callbacks.TensorBoard(log_dir, update_freq=100)
             print(f"🐸 [LOGGING] Logging to {log_dir}")
             checkpoint_dir = os.path.join(log_dir, 'model_checkpoint.{epoch:02d}')
-            checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-                checkpoint_dir,
-                save_weights_only=True)
+            checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(checkpoint_dir, save_weights_only=True, period=1,)
 
             callbacks = [summary_callback, checkpoint_callback]
 
